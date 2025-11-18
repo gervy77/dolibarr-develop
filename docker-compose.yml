@@ -1,0 +1,387 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Application Dolibarr - Développement
+  # ============================================================================
+  dolibarr-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dolibarr:dev
+    container_name: dolibarr-dev
+    ports:
+      - "8080:80"
+    volumes:
+      - ./htdocs:/var/www/html:ro
+      - dolibarr_documents_dev:/var/www/documents
+      - dolibarr_custom_dev:/var/www/html/custom
+    environment:
+      - PHP_OPCACHE_ENABLE=0
+      - PHP_DISPLAY_ERRORS=On
+    depends_on:
+      mysql-dev:
+        condition: service_healthy
+    networks:
+      - dolibarr-network-dev
+    restart: unless-stopped
+    profiles:
+      - dev
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+
+  # ============================================================================
+  # Application Dolibarr - Production
+  # ============================================================================
+  dolibarr-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${REGISTRY_URL:-registry.local:5000}/dolibarr:${VERSION:-latest}
+    container_name: dolibarr-prod
+    ports:
+      - "80:80"
+    volumes:
+      - dolibarr_documents_prod:/var/www/documents
+      - dolibarr_custom_prod:/var/www/html/custom
+      - dolibarr_sessions_prod:/var/www/html/sessions
+    environment:
+      - PHP_OPCACHE_ENABLE=1
+      - PHP_DISPLAY_ERRORS=Off
+    depends_on:
+      mysql-prod:
+        condition: service_healthy
+    networks:
+      - dolibarr-network-prod
+    restart: always
+    profiles:
+      - prod
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: false
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /var/run:noexec,nosuid,size=10m
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      - "com.dolibarr.description=Dolibarr ERP/CRM Application"
+      - "com.dolibarr.version=${VERSION:-latest}"
+      - "com.dolibarr.environment=production"
+
+  # ============================================================================
+  # Base de données MySQL - Développement
+  # ============================================================================
+  mysql-dev:
+    image: mariadb:10.11
+    container_name: dolibarr-mysql-dev
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-dev_root_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-dolibarr}
+      MYSQL_USER: ${MYSQL_USER:-dolibarr}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-dolibarr_password}
+    volumes:
+      - dolibarr_mysql_data_dev:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "3306:3306"
+    networks:
+      - dolibarr-network-dev
+    restart: unless-stopped
+    profiles:
+      - dev
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-dev_root_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  # ============================================================================
+  # Base de données MySQL - Production
+  # ============================================================================
+  mysql-prod:
+    image: mariadb:10.11
+    container_name: dolibarr-mysql-prod
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-dolibarr}
+      MYSQL_USER: ${MYSQL_USER:-dolibarr}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - dolibarr_mysql_data_prod:/var/lib/mysql
+      - dolibarr_mysql_conf_prod:/etc/mysql/conf.d
+      - ./docker/mysql/my.cnf:/etc/mysql/conf.d/dolibarr.cnf:ro
+    networks:
+      - dolibarr-network-prod
+    restart: always
+    profiles:
+      - prod
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --max-allowed-packet=256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      - "com.dolibarr.description=Dolibarr Database"
+      - "com.dolibarr.environment=production"
+
+  # ============================================================================
+  # phpMyAdmin (développement uniquement)
+  # ============================================================================
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: dolibarr-phpmyadmin-dev
+    environment:
+      PMA_HOST: mysql-dev
+      PMA_PORT: 3306
+      PMA_USER: ${MYSQL_USER:-dolibarr}
+      PMA_PASSWORD: ${MYSQL_PASSWORD:-dolibarr_password}
+      UPLOAD_LIMIT: 20M
+    ports:
+      - "8081:80"
+    depends_on:
+      - mysql-dev
+    networks:
+      - dolibarr-network-dev
+    restart: unless-stopped
+    profiles:
+      - tools
+      - dev-tools
+
+  # ============================================================================
+  # Prometheus pour le monitoring
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: dolibarr-prometheus
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - dolibarr_prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    networks:
+      - dolibarr-network-prod
+    restart: always
+    profiles:
+      - prod
+      - monitoring
+    labels:
+      - "com.dolibarr.description=Prometheus Monitoring"
+      - "com.dolibarr.environment=production"
+
+  # ============================================================================
+  # Grafana pour la visualisation
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: dolibarr-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    volumes:
+      - dolibarr_grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - dolibarr-network-prod
+    restart: always
+    profiles:
+      - prod
+      - monitoring
+    labels:
+      - "com.dolibarr.description=Grafana Dashboard"
+      - "com.dolibarr.environment=production"
+
+  # ============================================================================
+  # Services de monitoring supplémentaires
+  # ============================================================================
+  
+  # Node Exporter pour métriques système
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: dolibarr-node-exporter
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    ports:
+      - "9100:9100"
+    networks:
+      - dolibarr-network-prod
+    restart: always
+    profiles:
+      - monitoring
+    labels:
+      - "com.dolibarr.description=Node Exporter for system metrics"
+      - "com.dolibarr.environment=production"
+
+  # MySQL Exporter pour métriques de base de données
+  mysql-exporter:
+    image: prom/mysqld-exporter:latest
+    container_name: dolibarr-mysql-exporter
+    environment:
+      DATA_SOURCE_NAME: "${MYSQL_USER:-dolibarr}:${MYSQL_PASSWORD}@(mysql-prod:3306)/${MYSQL_DATABASE:-dolibarr}"
+    ports:
+      - "9104:9104"
+    depends_on:
+      - mysql-prod
+    networks:
+      - dolibarr-network-prod
+    restart: always
+    profiles:
+      - monitoring
+    labels:
+      - "com.dolibarr.description=MySQL Exporter for database metrics"
+      - "com.dolibarr.environment=production"
+
+  # PHP-FPM Exporter pour métriques PHP
+  php-fpm-exporter:
+    image: hipages/php-fpm_exporter:latest
+    container_name: dolibarr-php-fpm-exporter
+    environment:
+      PHP_FPM_SCRAPE_URI: "tcp://dolibarr-prod:9000/status"
+      PHP_FPM_FIX_PROCESS_COUNT: "true"
+    ports:
+      - "9253:9253"
+    depends_on:
+      - dolibarr-prod
+    networks:
+      - dolibarr-network-prod
+    restart: always
+    profiles:
+      - monitoring
+    labels:
+      - "com.dolibarr.description=PHP-FPM Exporter for PHP metrics"
+      - "com.dolibarr.environment=production"
+
+  # Nginx Exporter pour métriques Nginx
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    container_name: dolibarr-nginx-exporter
+    command:
+      - '-nginx.scrape-uri=http://dolibarr-prod:80/stub_status'
+    ports:
+      - "9113:9113"
+    depends_on:
+      - dolibarr-prod
+    networks:
+      - dolibarr-network-prod
+    restart: always
+    profiles:
+      - monitoring
+    labels:
+      - "com.dolibarr.description=Nginx Exporter for web server metrics"
+      - "com.dolibarr.environment=production"
+
+  # Alertmanager pour les alertes Prometheus
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: dolibarr-alertmanager
+    volumes:
+      - ./docker/prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - dolibarr_alertmanager_data:/alertmanager
+    ports:
+      - "9093:9093"
+    networks:
+      - dolibarr-network-prod
+    restart: always
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    profiles:
+      - monitoring
+    labels:
+      - "com.dolibarr.description=Alertmanager for Prometheus alerts"
+      - "com.dolibarr.environment=production"
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  # Volumes pour développement
+  dolibarr_documents_dev:
+    driver: local
+  dolibarr_custom_dev:
+    driver: local
+  dolibarr_mysql_data_dev:
+    driver: local
+  
+  # Volumes pour production
+  dolibarr_documents_prod:
+    driver: local
+  dolibarr_custom_prod:
+    driver: local
+  dolibarr_sessions_prod:
+    driver: local
+  dolibarr_mysql_data_prod:
+    driver: local
+  dolibarr_mysql_conf_prod:
+    driver: local
+  
+  # Volumes pour monitoring
+  dolibarr_prometheus_data:
+    driver: local
+  dolibarr_grafana_data:
+    driver: local
+  dolibarr_alertmanager_data:
+    driver: local
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  dolibarr-network-dev:
+    driver: bridge
+    name: dolibarr-network-dev
+  dolibarr-network-prod:
+    driver: bridge
+    name: dolibarr-network-prod
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"

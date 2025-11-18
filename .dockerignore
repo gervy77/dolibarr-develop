@@ -1,0 +1,67 @@
+# Fichiers Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!README.md
+!README-DEVSECOPS.md
+docs/
+
+# Fichiers de configuration de développement
+.env
+.env.local
+.env.*.local
+
+# Docker (exclure certains fichiers de l'image)
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.gitlab-ci.yml
+.github/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Fichiers temporaires
+*.log
+*.tmp
+*.cache
+.DS_Store
+Thumbs.db
+
+# Tests
+tests/
+*test.php
+*Test.php
+
+# Backups
+*.bak
+*.backup
+*.sql.gz
+*.dump
+
+# Dependencies (généralement déjà dans l'image)
+node_modules/
+
+# Volumes et données
+documents/
+*.sql
+*.db
+
+# Secrets et fichiers sensibles (jamais dans l'image)
+**/conf.php
+**/.env
+**/*secret*
+**/*key*
+**/*password*
+
+# Fichiers de configuration CI/CD
+.gitlab-ci-variables.example
+sonar-project.properties

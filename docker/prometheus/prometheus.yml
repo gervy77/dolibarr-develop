@@ -1,0 +1,56 @@
+# Configuration Prometheus pour Dolibarr
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'dolibarr-monitor'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Load rules once and periodically evaluate them
+rule_files:
+  # - "alert_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus lui-même
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Nginx exporter (si disponible)
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+    scrape_interval: 30s
+
+  # MySQL exporter (si disponible)
+  - job_name: 'mysql'
+    static_configs:
+      - targets: ['mysql-exporter:9104']
+    scrape_interval: 30s
+
+  # PHP-FPM exporter (si disponible)
+  - job_name: 'php-fpm'
+    static_configs:
+      - targets: ['php-fpm-exporter:9253']
+    scrape_interval: 30s
+
+  # Node exporter pour métriques système (si disponible)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+
+  # Application Dolibarr (endpoints de monitoring si disponibles)
+  - job_name: 'dolibarr'
+    static_configs:
+      - targets: ['dolibarr:80']
+    metrics_path: '/metrics'
+    scrape_interval: 60s
+
